@@ -342,10 +342,11 @@ const CAT_CONFIG = {
 };
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
-let currentUser = null;   // { email, name, given_name, picture }
-let accessToken = null;   // OAuth access token
-let tokenClient = null;
-let acronyms    = [];     // [{ id, a, d, c, added_by, date_added, last_updated, last_updated_by, _row }]
+let currentUser      = null;   // { email, name, given_name, picture }
+let accessToken      = null;   // OAuth access token
+let tokenClient      = null;
+let acronymsSheetGid = null;   // numeric tab ID (cached for row deletion)
+let acronyms         = [];     // [{ id, a, d, c, added_by, date_added, last_updated, last_updated_by, _row }]
 let currentTab       = 'alpha';
 let searchQuery      = '';
 let editingId        = null;
@@ -424,22 +425,46 @@ async function sheetsGet(path) {
   if (d.error) throw new Error(d.error.message || JSON.stringify(d.error));
   return d;
 }
-async function scriptRun(functionName, params) {
+async function sheetsAppend(tab, values) {
   const r = await fetch(
-    `https://script.googleapis.com/v1/scripts/${SCRIPT_ID}:run`,
+    `${SHEETS_BASE}/values/${encodeURIComponent(tab)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
     { method: 'POST', headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ function: functionName, parameters: [params] }) }
+      body: JSON.stringify({ values }) }
   );
   const d = await r.json();
-  if (d.error) {
-    const detail = d.error.details && d.error.details[0];
-    const msg = (detail && detail.errorMessage) || d.error.message || JSON.stringify(d.error);
-    console.error('Execution API error:', JSON.stringify(d.error));
-    throw new Error(msg);
-  }
-  if (d.response && d.response.result && d.response.result.error)
-    throw new Error(d.response.result.error);
-  return d.response ? d.response.result : null;
+  if (d.error) throw new Error(d.error.message);
+  return d;
+}
+async function sheetsUpdate(range, values) {
+  const r = await fetch(
+    `${SHEETS_BASE}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
+    { method: 'PUT', headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values }) }
+  );
+  const d = await r.json();
+  if (d.error) throw new Error(d.error.message);
+  return d;
+}
+async function sheetsBatchUpdate(requests) {
+  const r = await fetch(`${SHEETS_BASE}:batchUpdate`,
+    { method: 'POST', headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requests }) }
+  );
+  const d = await r.json();
+  if (d.error) throw new Error(d.error.message);
+  return d;
+}
+async function getAcronymsSheetGid() {
+  if (acronymsSheetGid !== null) return acronymsSheetGid;
+  const meta  = await sheetsGet('?fields=sheets.properties');
+  const sheet = meta.sheets.find(s => s.properties.title === 'Acronyms');
+  if (!sheet) throw new Error('Acronyms tab not found');
+  acronymsSheetGid = sheet.properties.sheetId;
+  return acronymsSheetGid;
+}
+async function logEdit(id, acronym, action, field, oldVal, newVal) {
+  const now = new Date().toISOString();
+  await sheetsAppend('EditLog', [[now, currentUser.email, currentUser.name, id, acronym, action, field, String(oldVal), String(newVal)]]);
 }
 
 // ─── DATA LOADING ─────────────────────────────────────────────────────────────
@@ -713,31 +738,36 @@ async function saveItem() {
       // ADD NEW
       const id  = generateId();
       const now = new Date().toISOString();
-      await scriptRun('apiAddAcronym', {
-        id, acronym: raw, definition: def, category: cat,
-        userEmail: currentUser.email, userName: currentUser.name, dateAdded: now,
-      });
+      const res = await sheetsAppend('Acronyms', [[id, raw, def, cat, currentUser.email, now, now, currentUser.email]]);
+      await logEdit(id, raw, 'add', '', '', '');
+      let newRow = acronyms.length + 2;
+      if (res.updates && res.updates.updatedRange) {
+        const m = res.updates.updatedRange.match(/(\d+):/);
+        if (m) newRow = parseInt(m[1]);
+      }
       acronyms.push({ id, a: raw, d: def, c: cat, added_by: currentUser.email,
-        date_added: now, last_updated: now, last_updated_by: currentUser.email, _row: null });
+        date_added: now, last_updated: now, last_updated_by: currentUser.email, _row: newRow });
       toast('Acronym added ✓');
     } else {
       // EDIT EXISTING
-      const item    = acronyms.find(x => x.id === editingId);
-      const newVals = { acronym: raw,    definition: def,    category: cat    };
-      const oldVals = { acronym: item.a, definition: item.d, category: item.c };
-      const stateKey = { acronym: 'a',   definition: 'd',    category: 'c'    };
-      const changes = ['acronym', 'definition', 'category']
-        .filter(f => newVals[f] !== oldVals[f])
-        .map(f => ({ field: f, newValue: newVals[f], oldValue: oldVals[f] }));
+      const item      = acronyms.find(x => x.id === editingId);
+      const colLetter = { acronym: 'B', definition: 'C', category: 'D' };
+      const newVals   = { acronym: raw,    definition: def,    category: cat    };
+      const oldVals   = { acronym: item.a, definition: item.d, category: item.c };
+      const stateKey  = { acronym: 'a',    definition: 'd',    category: 'c'    };
 
-      if (!changes.length) { toast('No changes made'); closeModal(); return; }
-
-      await scriptRun('apiEditAcronym', {
-        acronymId: editingId, acronymText: item.a, changes,
-        userEmail: currentUser.email, userName: currentUser.name,
-      });
+      let changed = false;
+      for (const field of ['acronym', 'definition', 'category']) {
+        if (newVals[field] !== oldVals[field]) {
+          await sheetsUpdate(`Acronyms!${colLetter[field]}${item._row}`, [[newVals[field]]]);
+          await logEdit(editingId, item.a, 'edit', field, oldVals[field], newVals[field]);
+          item[stateKey[field]] = newVals[field];
+          changed = true;
+        }
+      }
+      if (!changed) { toast('No changes made'); closeModal(); return; }
       const now = new Date().toISOString();
-      changes.forEach(c => { item[stateKey[c.field]] = c.newValue; });
+      await sheetsUpdate(`Acronyms!G${item._row}:H${item._row}`, [[now, currentUser.email]]);
       item.last_updated    = now;
       item.last_updated_by = currentUser.email;
       toast('Changes saved ✓');
@@ -767,11 +797,16 @@ async function confirmDelete() {
   const item = acronyms.find(x => x.id === editingId);
   if (!item) return;
   try {
-    await scriptRun('apiDeleteAcronym', {
-      acronymId: editingId, acronymText: item.a,
-      userEmail: currentUser.email, userName: currentUser.name,
-    });
+    await logEdit(editingId, item.a, 'delete', '', '', '');
+    const gid = await getAcronymsSheetGid();
+    await sheetsBatchUpdate([{
+      deleteDimension: {
+        range: { sheetId: gid, dimension: 'ROWS', startIndex: item._row - 1, endIndex: item._row }
+      }
+    }]);
+    const deletedRow = item._row;
     acronyms = acronyms.filter(x => x.id !== editingId);
+    acronyms.forEach(x => { if (x._row > deletedRow) x._row -= 1; });
     closeModal();
     renderCurrent();
     toast('Acronym deleted');
