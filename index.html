@@ -374,9 +374,6 @@ function initGoogleAuth() {
   } else {
     // First-time user — show button, require click (avoids popup blocker)
     document.getElementById('signinBtn').style.display = 'inline-flex';
-    document.getElementById('alphaList').innerHTML =
-      '<div class="status-msg"><span class="icon">🔐</span><p>Sign in with your Paramount Google account to access the glossary.</p></div>';
-    document.getElementById('statsText').textContent = 'Sign in required';
   }
 }
 
@@ -384,9 +381,6 @@ async function handleTokenResponse(response) {
   if (response.error) {
     localStorage.removeItem('gsi_signed_in');
     document.getElementById('signinBtn').style.display = 'inline-flex';
-    document.getElementById('alphaList').innerHTML =
-      '<div class="status-msg"><span class="icon">🔐</span><p>Sign in with your Paramount Google account to access the glossary.</p></div>';
-    document.getElementById('statsText').textContent = 'Sign in required';
     return;
   }
   accessToken = response.access_token;
@@ -407,7 +401,6 @@ async function handleTokenResponse(response) {
     if (currentUser.picture) avatar.src = currentUser.picture; else avatar.style.display = 'none';
     document.getElementById('userName').textContent = currentUser.given_name;
     document.getElementById('userInfo').style.display = 'flex';
-    loadAcronyms();
   } catch(e) {
     console.error('Userinfo error:', e);
     toast('Sign-in error — please try again');
@@ -490,36 +483,53 @@ async function loadAcronyms(manual) {
   const btn = document.getElementById('refreshBtn');
   btn.classList.add('spinning');
   try {
-    const data = await sheetsGet('/values/Acronyms');
-    if (!data.values || data.values.length < 2) { acronyms = []; renderCurrent(); return; }
-    const [headers, ...rows] = data.values;
-    const col = {
+    // Public gviz read — no OAuth token needed, works for anyone with the link
+    const url  = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=Acronyms`;
+    const text = await fetch(url).then(r => r.text());
+    const json = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
+
+    if (!json.table || !json.table.rows || json.table.rows.length === 0) {
+      acronyms = []; renderCurrent(); return;
+    }
+
+    const headers = json.table.cols.map(c => c.label);
+    const idx = {
       id: headers.indexOf('id'), acronym: headers.indexOf('acronym'),
       def: headers.indexOf('definition'), cat: headers.indexOf('category'),
       addedBy: headers.indexOf('added_by'), dateAdded: headers.indexOf('date_added'),
       lastUpdated: headers.indexOf('last_updated'), lastUpdatedBy: headers.indexOf('last_updated_by'),
     };
-    acronyms = rows.filter(r => r[col.id]).map((r, i) => ({
-      id:              String(r[col.id]            || ''),
-      a:               String(r[col.acronym]       || ''),
-      d:               String(r[col.def]           || ''),
-      c:               String(r[col.cat]           || ''),
-      added_by:        String(r[col.addedBy]       || ''),
-      date_added:      String(r[col.dateAdded]     || ''),
-      last_updated:    col.lastUpdated    >= 0 ? String(r[col.lastUpdated]    || '') : '',
-      last_updated_by: col.lastUpdatedBy >= 0 ? String(r[col.lastUpdatedBy] || '') : '',
-      _row:            i + 2,
-    }));
+
+    const cell = (row, i) => {
+      if (i < 0 || !row.c || !row.c[i] || row.c[i].v == null) return '';
+      const v = row.c[i].v;
+      if (typeof v === 'string' && v.startsWith('Date(')) {
+        const parts = v.slice(5, -1).split(',').map(Number);
+        return new Date(parts[0], parts[1], parts[2]).toISOString();
+      }
+      return String(v);
+    };
+
+    acronyms = json.table.rows
+      .map((r, i) => ({
+        id:              cell(r, idx.id),
+        a:               cell(r, idx.acronym),
+        d:               cell(r, idx.def),
+        c:               cell(r, idx.cat),
+        added_by:        cell(r, idx.addedBy),
+        date_added:      cell(r, idx.dateAdded),
+        last_updated:    cell(r, idx.lastUpdated),
+        last_updated_by: cell(r, idx.lastUpdatedBy),
+        _row:            i + 2,
+      }))
+      .filter(x => x.id);
+
     renderCurrent();
     if (manual) toast('Refreshed — ' + acronyms.length + ' acronyms loaded');
   } catch(err) {
     console.error('Load error:', err);
-    const noAccess = err.status === 403 || /permission|not have access|forbidden/i.test(err.message);
-    const errHtml = noAccess
-      ? `Allow pop-ups if prompted, then <a href="https://docs.google.com/spreadsheets/d/${SHEET_ID}" target="_blank" style="color:var(--accent);font-weight:700">Request Access</a> — clicking opens the sheet where you can ask the owner for access.`
-      : `Could not load: ${esc(err.message)}`;
     document.getElementById('alphaList').innerHTML =
-      `<div class="status-msg"><span class="icon">❌</span><p>${errHtml}</p></div>`;
+      `<div class="status-msg"><span class="icon">❌</span><p>Could not load acronyms. <a href="https://docs.google.com/spreadsheets/d/${SHEET_ID}" target="_blank" style="color:var(--accent);font-weight:700">Request Access</a> if you need permission to view this glossary.</p></div>`;
     document.getElementById('statsText').textContent = 'Load failed';
   }
   btn.classList.remove('spinning');
@@ -895,7 +905,8 @@ document.addEventListener('keydown', e => {
 });
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
-initGoogleAuth();
+loadAcronyms();   // load data immediately — no sign-in required to view
+initGoogleAuth(); // set up OAuth for editing
 </script>
 </body>
 </html>
