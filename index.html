@@ -477,7 +477,7 @@ function logEdit(id, acronym, action, field, oldVal, newVal) {
   });
   // Fire-and-forget — no-cors because Google Forms doesn't set CORS headers
   fetch('https://docs.google.com/forms/d/e/1FAIpQLSei5weE5U4X_PUMVIzMzViGnacSAvjAbo5HFtaOi5ffr50T7w/formResponse',
-    { method: 'POST', mode: 'no-cors', body });
+    { method: 'POST', mode: 'no-cors', credentials: 'include', body });
 }
 
 // ─── DATA LOADING ─────────────────────────────────────────────────────────────
