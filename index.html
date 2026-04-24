@@ -325,7 +325,7 @@
 //   → OAuth 2.0 Client ID → Web application → add your GitHub Pages URL as authorized origin.
 //   Also enable the Google Sheets API in the same project.
 const SHEET_ID         = '1M5dd9RjSeC8xpmKuQ2ZaxfJH0IqcPxQMksX8u1na-Wc';
-const SCRIPT_ID        = 'AKfycbwnyx7_pXcl0Bh1Oi0f7766VZ-GRWZ0wIOBiFMgOschw2rVT-jtqzSTY5eheBjXqJHx';
+const SCRIPT_ID        = '1i7rj5WTCcgXP1RWGam1RDLNEctfhC091D8YORmqoygFg5-f3Z0a1VpwJ';
 const GOOGLE_CLIENT_ID = '255902110630-qfjsu8njpgquvplu80rfpqhhr723uo0s.apps.googleusercontent.com';
 const SHEETS_BASE      = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
 
@@ -431,7 +431,12 @@ async function scriptRun(functionName, params) {
       body: JSON.stringify({ function: functionName, parameters: [params] }) }
   );
   const d = await r.json();
-  if (d.error) throw new Error(d.error.message || JSON.stringify(d.error));
+  if (d.error) {
+    const detail = d.error.details && d.error.details[0];
+    const msg = (detail && detail.errorMessage) || d.error.message || JSON.stringify(d.error);
+    console.error('Execution API error:', JSON.stringify(d.error));
+    throw new Error(msg);
+  }
   if (d.response && d.response.result && d.response.result.error)
     throw new Error(d.response.result.error);
   return d.response ? d.response.result : null;
