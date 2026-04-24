@@ -462,9 +462,22 @@ async function getAcronymsSheetGid() {
   acronymsSheetGid = sheet.properties.sheetId;
   return acronymsSheetGid;
 }
-async function logEdit(id, acronym, action, field, oldVal, newVal) {
-  const now = new Date().toISOString();
-  await sheetsAppend('EditLog', [[now, currentUser.email, currentUser.name, id, acronym, action, field, String(oldVal), String(newVal)]]);
+function logEdit(id, acronym, action, field, oldVal, newVal) {
+  const now  = new Date().toISOString();
+  const body = new URLSearchParams({
+    'entry.181354051':  now,
+    'entry.1791326237': currentUser.email,
+    'entry.21887687':   currentUser.name,
+    'entry.408088837':  id,
+    'entry.1401337172': acronym,
+    'entry.1495225328': action,
+    'entry.563141296':  String(field),
+    'entry.1517213708': String(oldVal),
+    'entry.1442009884': String(newVal),
+  });
+  // Fire-and-forget — no-cors because Google Forms doesn't set CORS headers
+  fetch('https://docs.google.com/forms/d/e/1FAIpQLSei5weE5U4X_PUMVIzMzViGnacSAvjAbo5HFtaOi5ffr50T7w/formResponse',
+    { method: 'POST', mode: 'no-cors', body });
 }
 
 // ─── DATA LOADING ─────────────────────────────────────────────────────────────
@@ -739,7 +752,7 @@ async function saveItem() {
       const id  = generateId();
       const now = new Date().toISOString();
       const res = await sheetsAppend('Acronyms', [[id, raw, def, cat, currentUser.email, now, now, currentUser.email]]);
-      await logEdit(id, raw, 'add', '', '', '');
+      logEdit(id, raw, 'add', '', '', '');
       let newRow = acronyms.length + 2;
       if (res.updates && res.updates.updatedRange) {
         const m = res.updates.updatedRange.match(/(\d+):/);
@@ -760,7 +773,7 @@ async function saveItem() {
       for (const field of ['acronym', 'definition', 'category']) {
         if (newVals[field] !== oldVals[field]) {
           await sheetsUpdate(`Acronyms!${colLetter[field]}${item._row}`, [[newVals[field]]]);
-          await logEdit(editingId, item.a, 'edit', field, oldVals[field], newVals[field]);
+          logEdit(editingId, item.a, 'edit', field, oldVals[field], newVals[field]);
           item[stateKey[field]] = newVals[field];
           changed = true;
         }
@@ -797,7 +810,7 @@ async function confirmDelete() {
   const item = acronyms.find(x => x.id === editingId);
   if (!item) return;
   try {
-    await logEdit(editingId, item.a, 'delete', '', '', '');
+    logEdit(editingId, item.a, 'delete', '', '', '');
     const gid = await getAcronymsSheetGid();
     await sheetsBatchUpdate([{
       deleteDimension: {
