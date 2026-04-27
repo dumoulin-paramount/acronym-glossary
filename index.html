@@ -499,7 +499,8 @@ async function loadAcronyms(manual) {
   try {
     const data = await sheetsGet('/values/Acronyms');
     if (!data.values || data.values.length < 2) { acronyms = []; renderCurrent(); return; }
-    const [headers, ...rows] = data.values;
+    const [rawHeaders, ...rows] = data.values;
+    const headers = rawHeaders.map(h => String(h).toLowerCase().trim());
     const col = {
       id: headers.indexOf('id'), acronym: headers.indexOf('acronym'),
       def: headers.indexOf('definition'), cat: headers.indexOf('category'),
