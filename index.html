@@ -132,6 +132,9 @@
     .acronym-card:hover .edit-hint, .cat-card:hover .edit-hint { opacity: 1; }
     .contrib-badge { display: inline-block; font-size: 0.63rem; font-weight: 700; background: #dbeafe; color: #1e40af; border-radius: 10px; padding: 1px 7px; margin-left: 6px; vertical-align: middle; }
     .last-update { font-size: 0.68rem; color: var(--muted); margin-top: 6px; }
+    .acr-source { font-size: 0.68rem; color: var(--muted); margin-top: 3px; }
+    .acr-source a { color: var(--accent); text-decoration: none; }
+    .acr-source a:hover { text-decoration: underline; }
 
     /* ── CATEGORIES TAB ── */
     .category-section { margin-bottom: 20px; border: 1.5px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--card); }
@@ -300,6 +303,10 @@
       <div class="form-group" id="newCatGroup" style="display:none">
         <label>New Category Name</label>
         <input type="text" id="editNewCat" placeholder="Enter new category name" />
+      </div>
+      <div class="form-group">
+        <label>Source <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional — e.g. Slack, GDocs, Jira https://…)</span></label>
+        <input type="text" id="editSource" placeholder="e.g. Slack, GDocs, Initial Search" autocomplete="off" />
       </div>
     </div>
     <div class="modal-footer">
@@ -498,6 +505,7 @@ async function loadAcronyms(manual) {
       def: headers.indexOf('definition'), cat: headers.indexOf('category'),
       addedBy: headers.indexOf('added_by'), dateAdded: headers.indexOf('date_added'),
       lastUpdated: headers.indexOf('last_updated'), lastUpdatedBy: headers.indexOf('last_updated_by'),
+      source: headers.indexOf('source'),
     };
     acronyms = rows.filter(r => r[col.id]).map((r, i) => ({
       id:              String(r[col.id]            || ''),
@@ -508,6 +516,7 @@ async function loadAcronyms(manual) {
       date_added:      String(r[col.dateAdded]     || ''),
       last_updated:    col.lastUpdated    >= 0 ? String(r[col.lastUpdated]    || '') : '',
       last_updated_by: col.lastUpdatedBy >= 0 ? String(r[col.lastUpdatedBy] || '') : '',
+      source:          col.source         >= 0 ? String(r[col.source]        || '') : '',
       _row:            i + 2,
     }));
     renderCurrent();
@@ -561,6 +570,17 @@ function contribBadge(item) {
   return `<span class="contrib-badge" title="Added by ${esc(item.added_by)}">+ ${esc(name)}</span>`;
 }
 
+function sourceHtml(raw) {
+  if (!raw) return '';
+  const parts = raw.split(/(https?:\/\/[^\s,]+)/g);
+  return parts.map((p, i) => i % 2 === 0 ? esc(p) : `<a href="${p}" target="_blank">${esc(p)}</a>`).join('');
+}
+
+function sourceLabel(item) {
+  if (!item.source) return '';
+  return `<div class="acr-source">Source: ${sourceHtml(item.source)}</div>`;
+}
+
 function formatDate(isoStr) {
   if (!isoStr) return '';
   const d = new Date(isoStr);
@@ -586,6 +606,7 @@ function alphaCard(item) {
     </div>
     <div class="acr-def">${esc(item.d)}</div>
     <span class="acr-cat" style="background:${catColor(item.c)};color:#333">${esc(item.c)}</span>
+    ${sourceLabel(item)}
     ${lastUpdateLabel(item)}
   </div>`;
 }
@@ -597,6 +618,7 @@ function catCard(item) {
       <span class="edit-hint">✏ edit</span>
     </div>
     <div class="acr-def">${esc(item.d)}</div>
+    ${sourceLabel(item)}
     ${lastUpdateLabel(item)}
   </div>`;
 }
@@ -703,6 +725,7 @@ function openEdit(id) {
   document.getElementById('editAcronym').value = item.a;
   document.getElementById('editDef').value = item.d;
   populateCatSelect(item.c);
+  document.getElementById('editSource').value = item.source || '';
   document.getElementById('newCatGroup').style.display = 'none';
   document.getElementById('deleteBtn').style.display = 'inline-flex';
   document.getElementById('deleteConfirm').classList.remove('show');
@@ -715,6 +738,7 @@ function openAdd() {
   document.getElementById('editAcronym').value = '';
   document.getElementById('editDef').value = '';
   populateCatSelect(allCategories()[0]);
+  document.getElementById('editSource').value = '';
   document.getElementById('newCatGroup').style.display = 'none';
   document.getElementById('deleteBtn').style.display = 'none';
   document.getElementById('deleteConfirm').classList.remove('show');
@@ -742,6 +766,7 @@ async function saveItem() {
   const cat    = catSel === '__new__'
     ? document.getElementById('editNewCat').value.trim()
     : catSel;
+  const source = document.getElementById('editSource').value.trim();
 
   if (!raw) { flashField('editAcronym'); return; }
   if (!def) { flashField('editDef');     return; }
@@ -760,26 +785,26 @@ async function saveItem() {
       // ADD NEW
       const id  = generateId();
       const now = new Date().toISOString();
-      const res = await sheetsAppend('Acronyms', [[id, raw, def, cat, currentUser.email, now, now, currentUser.email]]);
-      logEdit(id, raw, 'add', [], `Added '${raw}' | Definition: '${def}' | Category: '${cat}'`);
+      const res = await sheetsAppend('Acronyms', [[id, raw, def, cat, currentUser.email, now, now, currentUser.email, source]]);
+      logEdit(id, raw, 'add', [], `Added '${raw}' | Definition: '${def}' | Category: '${cat}'${source ? ' | Source: \'' + source + '\'' : ''}`);
       let newRow = acronyms.length + 2;
       if (res.updates && res.updates.updatedRange) {
         const m = res.updates.updatedRange.match(/(\d+):/);
         if (m) newRow = parseInt(m[1]);
       }
       acronyms.push({ id, a: raw, d: def, c: cat, added_by: currentUser.email,
-        date_added: now, last_updated: now, last_updated_by: currentUser.email, _row: newRow });
+        date_added: now, last_updated: now, last_updated_by: currentUser.email, source, _row: newRow });
       toast('Acronym added ✓');
     } else {
       // EDIT EXISTING
       const item      = acronyms.find(x => x.id === editingId);
-      const colLetter = { acronym: 'B', definition: 'C', category: 'D' };
-      const newVals   = { acronym: raw,    definition: def,    category: cat    };
-      const oldVals   = { acronym: item.a, definition: item.d, category: item.c };
-      const stateKey  = { acronym: 'a',    definition: 'd',    category: 'c'    };
+      const colLetter = { acronym: 'B', definition: 'C', category: 'D', source: 'I' };
+      const newVals   = { acronym: raw,          definition: def,    category: cat,    source: source       };
+      const oldVals   = { acronym: item.a,        definition: item.d, category: item.c, source: item.source  };
+      const stateKey  = { acronym: 'a',           definition: 'd',    category: 'c',    source: 'source'     };
 
       const fieldChanges = [];
-      for (const field of ['acronym', 'definition', 'category']) {
+      for (const field of ['acronym', 'definition', 'category', 'source']) {
         if (newVals[field] !== oldVals[field]) {
           fieldChanges.push({ field, oldVal: oldVals[field], newVal: newVals[field] });
         }
@@ -791,7 +816,7 @@ async function saveItem() {
         item[stateKey[field]] = newVal;
       }
 
-      const fieldLabel = { acronym: 'Acronym', definition: 'Definition', category: 'Category' };
+      const fieldLabel = { acronym: 'Acronym', definition: 'Definition', category: 'Category', source: 'Source' };
       const origAcronym = oldVals.acronym;
       const summaryParts = fieldChanges.map(({ field, oldVal, newVal }) =>
         `${fieldLabel[field]}: '${oldVal}' → '${newVal}'`
