@@ -574,7 +574,8 @@ function filtered() {
   return acronyms.filter(x =>
     x.a.toLowerCase().includes(q) ||
     x.d.toLowerCase().includes(q) ||
-    x.c.toLowerCase().includes(q)
+    x.c.toLowerCase().includes(q) ||
+    x.added_by.toLowerCase().includes(q)
   );
 }
 
