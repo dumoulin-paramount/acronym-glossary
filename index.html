@@ -425,6 +425,11 @@ async function handleTokenResponse(response) {
     if (currentUser.picture) avatar.src = currentUser.picture; else avatar.style.display = 'none';
     document.getElementById('userName').textContent = currentUser.given_name;
     document.getElementById('userInfo').style.display = 'flex';
+    if (!sessionStorage.getItem('visit_logged')) {
+      sheetsAppend('VisitLog', [[new Date().toISOString(), currentUser.email, currentUser.name]])
+        .catch(e => console.warn('VisitLog write failed:', e.message));
+      sessionStorage.setItem('visit_logged', '1');
+    }
     loadAcronyms();
   } catch(e) {
     console.error('Userinfo error:', e);
