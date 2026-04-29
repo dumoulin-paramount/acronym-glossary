@@ -595,31 +595,38 @@ function voteButton(item) {
   const voted    = hasVoted(item.id);
   const signedIn = !!currentUser;
   const cls      = voted ? 'vote-btn voted' : signedIn ? 'vote-btn' : 'vote-btn no-auth';
-  const title    = voted ? 'You upvoted this' : signedIn ? 'Upvote this acronym' : 'Sign in to upvote';
+  const title    = voted ? 'Click to remove your upvote' : signedIn ? 'Upvote this acronym' : 'Sign in to upvote';
   return `<button class="${cls}" onclick="voteAcronym('${esc(item.id)}',event)" title="${title}">👍 ${count}</button>`;
 }
 
 async function voteAcronym(id, event) {
   event.stopPropagation();
   if (!currentUser) { toast('Sign in to upvote acronyms'); return; }
-  if (hasVoted(id))  { toast('You already upvoted this'); return; }
 
-  const item = acronyms.find(x => x.id === id);
+  const item         = acronyms.find(x => x.id === id);
   if (!item) return;
 
+  const removing  = hasVoted(id);
+  const newCount  = removing ? Math.max(0, (item.votes || 0) - 1) : (item.votes || 0) + 1;
+  const action    = removing ? 'remove' : 'add';
+
   try {
-    const newCount = (item.votes || 0) + 1;
     await sheetsUpdate(`Acronyms!J${item._row}`, [[newCount]]);
     const now = new Date().toISOString();
-    await sheetsAppend('VoteLog', [[now, currentUser.email, currentUser.name, id, item.a]]);
+    await sheetsAppend('VoteLog', [[now, currentUser.email, currentUser.name, id, item.a, action]]);
 
     item.votes = newCount;
     const key   = 'voted_' + currentUser.email;
     const voted = JSON.parse(localStorage.getItem(key) || '[]');
-    voted.push(id);
+    if (removing) {
+      const i = voted.indexOf(id);
+      if (i > -1) voted.splice(i, 1);
+    } else {
+      voted.push(id);
+    }
     localStorage.setItem(key, JSON.stringify(voted));
     renderCurrent();
-    toast('👍 Upvoted!');
+    toast(removing ? 'Upvote removed' : '👍 Upvoted!');
   } catch(err) {
     console.error('Vote error:', err);
     toast('Vote failed: ' + err.message);
