@@ -135,6 +135,17 @@
     .acr-source { font-size: 0.68rem; color: var(--muted); margin-top: 3px; }
     .acr-source a { color: var(--accent); text-decoration: none; }
     .acr-source a:hover { text-decoration: underline; }
+    .card-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+    .card-footer .last-update { margin-top: 0; }
+    .vote-btn {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: none; border: 1.5px solid var(--border); border-radius: 20px;
+      padding: 3px 10px; font-size: 0.72rem; font-weight: 600; color: var(--muted);
+      cursor: pointer; transition: all 0.15s; font-family: inherit; flex-shrink: 0;
+    }
+    .vote-btn:hover:not(.voted):not(.no-auth) { border-color: var(--accent); color: var(--accent); }
+    .vote-btn.voted { border-color: var(--accent); color: var(--accent); background: var(--blue-light); cursor: default; }
+    .vote-btn.no-auth { cursor: default; opacity: 0.55; }
 
     /* ── CATEGORIES TAB ── */
     .category-section { margin-bottom: 20px; border: 1.5px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--card); }
@@ -507,6 +518,7 @@ async function loadAcronyms(manual) {
       addedBy: headers.indexOf('added_by'), dateAdded: headers.indexOf('date_added'),
       lastUpdated: headers.indexOf('last_updated'), lastUpdatedBy: headers.indexOf('last_updated_by'),
       source: headers.indexOf('source'),
+      votes:  headers.indexOf('votes'),
     };
     acronyms = rows.filter(r => r[col.id]).map((r, i) => ({
       id:              String(r[col.id]            || ''),
@@ -517,7 +529,8 @@ async function loadAcronyms(manual) {
       date_added:      String(r[col.dateAdded]     || ''),
       last_updated:    col.lastUpdated    >= 0 ? String(r[col.lastUpdated]    || '') : '',
       last_updated_by: col.lastUpdatedBy >= 0 ? String(r[col.lastUpdatedBy] || '') : '',
-      source:          col.source         >= 0 ? String(r[col.source]        || '') : '',
+      source:          col.source >= 0 ? String(r[col.source] || '') : '',
+      votes:           col.votes  >= 0 ? parseInt(r[col.votes]  || 0) : 0,
       _row:            i + 2,
     }));
     renderCurrent();
@@ -571,6 +584,48 @@ function contribBadge(item) {
   return `<span class="contrib-badge" title="Added by ${esc(item.added_by)}">+ ${esc(name)}</span>`;
 }
 
+function hasVoted(id) {
+  if (!currentUser) return false;
+  const voted = JSON.parse(localStorage.getItem('voted_' + currentUser.email) || '[]');
+  return voted.includes(id);
+}
+
+function voteButton(item) {
+  const count    = item.votes || 0;
+  const voted    = hasVoted(item.id);
+  const signedIn = !!currentUser;
+  const cls      = voted ? 'vote-btn voted' : signedIn ? 'vote-btn' : 'vote-btn no-auth';
+  const title    = voted ? 'You upvoted this' : signedIn ? 'Upvote this acronym' : 'Sign in to upvote';
+  return `<button class="${cls}" onclick="voteAcronym('${esc(item.id)}',event)" title="${title}">👍 ${count}</button>`;
+}
+
+async function voteAcronym(id, event) {
+  event.stopPropagation();
+  if (!currentUser) { toast('Sign in to upvote acronyms'); return; }
+  if (hasVoted(id))  { toast('You already upvoted this'); return; }
+
+  const item = acronyms.find(x => x.id === id);
+  if (!item) return;
+
+  try {
+    const newCount = (item.votes || 0) + 1;
+    await sheetsUpdate(`Acronyms!J${item._row}`, [[newCount]]);
+    const now = new Date().toISOString();
+    await sheetsAppend('VoteLog', [[now, currentUser.email, currentUser.name, id, item.a]]);
+
+    item.votes = newCount;
+    const key   = 'voted_' + currentUser.email;
+    const voted = JSON.parse(localStorage.getItem(key) || '[]');
+    voted.push(id);
+    localStorage.setItem(key, JSON.stringify(voted));
+    renderCurrent();
+    toast('👍 Upvoted!');
+  } catch(err) {
+    console.error('Vote error:', err);
+    toast('Vote failed: ' + err.message);
+  }
+}
+
 function sourceHtml(raw) {
   if (!raw) return '';
   const parts = raw.split(/(https?:\/\/[^\s,]+)/g);
@@ -608,7 +663,7 @@ function alphaCard(item) {
     <div class="acr-def">${esc(item.d)}</div>
     <span class="acr-cat" style="background:${catColor(item.c)};color:#333">${esc(item.c)}</span>
     ${sourceLabel(item)}
-    ${lastUpdateLabel(item)}
+    <div class="card-footer">${lastUpdateLabel(item)}${voteButton(item)}</div>
   </div>`;
 }
 
@@ -620,7 +675,7 @@ function catCard(item) {
     </div>
     <div class="acr-def">${esc(item.d)}</div>
     ${sourceLabel(item)}
-    ${lastUpdateLabel(item)}
+    <div class="card-footer">${lastUpdateLabel(item)}${voteButton(item)}</div>
   </div>`;
 }
 
